@@ -1,0 +1,284 @@
+<?php
+/*
+ * General Structure
+ *
+ * Main Feed that pulls the training feeds (on Youtube user)
+ * Oauth required for private feeds.
+ *
+ * Content types:
+ * - Training (Feed for jumps)
+ * - Jump (Video from Youtube + link to local file)
+ * - Point (For every point in title a relation get's created)
+ * - Figure (Figures are referenced by jumps and points)
+ */
+
+// Make this for insert instead of update
+function ss_referencer_entity_insert($entity, $type) {
+  if (isset($entity->type) && $entity->type == 'training') {
+    $title = explode(' ', $entity->title);
+    $time = $title[0];
+    $dropzone = $title[1];
+    $entity->field_dropzone['und']['0']['value'] = $dropzone;
+    $stamp = strtotime($time);
+    $entity->field_date['und']['0']['value'] = date('d-m-y\T00:00:00', $stamp);
+    // Save the created node (necessary?)
+    field_attach_update('node', $entity);
+  }
+
+  if (isset($entity->type) && $entity->type == 'jump') {
+    // Get language and file
+    $language = $entity->language;
+    $feeds_item = node_load($entity->feeds_item->feed_nid);
+    $file = $entity->field_filename[$language][0]['value'];
+    // Split file into draw and total score
+    $info = pathinfo($file);
+    $filename = $info['filename'];
+    $clean_filename = trim(preg_replace('/\s*\([^)]*\)/', '', $filename));
+    $split = explode('=', $clean_filename);
+    $draw = explode('-', $split[0]);
+    $points =$split[1];
+
+    $generated_points = ss_referencer_generate_multiple_point_draw($draw, $points);
+    $created_points = array();
+    // Create a node for each point and reference it to the formation
+    foreach ($generated_points as $key => $value) {
+      // Set node values
+      $node = new stdClass();
+      $node->type = 'point';
+      node_object_prepare($node);
+      $node->title    = $value['title'];
+      $node->language = LANGUAGE_NONE;
+      $node->field_formation['und']['0']['target_id'] = $value['nid'];
+      $node->group_audience['und']['0'] = $feeds_item->group_audience['und']['0'];
+      // Create the node
+      node_save($node);
+      // Keep nid's to store in the node reference field
+      $created_points[] = array('target_id' => $node->nid);
+    }
+    // Add the created points to the field
+    $entity->field_points['und'] = $created_points;
+    // Fill in the total score
+    $entity->field_total_score['und']['0']['value'] = $points;
+    // Get the formations from the draw and reference them for organising
+    // purposes. This will be easy to look up jumps in history on draw.
+    $draw_figures =  array();
+    foreach ($draw as $figure) {
+      $result = db_query('SELECT n.nid FROM {node} n WHERE n.title = :title and n.type = :type', array(':title' => $figure, ':type' => 'formation'));
+      $figure_nid = $result->fetchField();
+      $draw_figures[] = array('target_id' => (int)$figure_nid);
+    }
+    $entity->field_formation['und'] = $draw_figures;
+    // Copy some values from the feed
+    $entity->field_dropzone = $feeds_item->field_dropzone;
+    $entity->field_date = $feeds_item->field_date;
+    $entity->field_training['und']['0']['target_id'] = $entity->feeds_item->feed_nid;
+    $entity->group_audience['und']['0'] = $feeds_item->group_audience['und']['0'];
+    // Save the created node (necessary?)
+    field_attach_update('node', $entity);
+  }
+}
+
+/**
+* Implements hook_node_delete().
+*
+* Delete all points when jump gets deleted.
+*/
+function ss_referencer_node_delete($node) {
+  if ($node->type == 'jump'){
+    $nids = db_query('SELECT field_points_target_id FROM {field_data_field_points} WHERE entity_id = :nid', array(':nid' => $node->nid))->fetchCol();
+    node_delete_multiple($nids);
+    dpm($nids, 'Deleted points');
+  }
+}
+
+/**
+ * Record button that plays the video and listens for points
+ */
+
+function ss_referencer_form_point_node_form_alter(&$form, $form_state) {
+  $language = $form['field_point_value']['#language'];
+  $form['field_assign_to']['#states'] = array(
+    'visible' => array(
+      ':input[name="field_point_value[' . $language . ']"]' => array('value' => '0'),
+    ),
+    'required' => array(
+      ':input[name="field_point_value[' . $language . ']"]' => array('value' => '0'),
+    ),
+  );
+  // TODO: make this a foreach on each option
+  // TODO: update field_bust_type options through ajax depending on camera or performer member.
+  $language = $form['field_assign_to']['#language'];
+  $form['field_bust_type']['#states'] = array(
+    'visible' => array(
+        array(':input[name="field_assign_to[' . $language . '][0]"]' => array('checked' => TRUE)),
+        array(':input[name="field_assign_to[' . $language . '][1]"]' => array('checked' => TRUE)),
+    ),
+  );
+}
+
+/**
+ *
+ * Helper function to generate all points that have been attempted in the jump
+ * @param array() $draw
+ * @param integer $points
+ * @return multitype:
+ */
+function ss_referencer_generate_multiple_point_draw($draw, $points) {
+  // Generate the single point draw
+  $single_point_draw = array();
+  foreach ($draw as $figure) {
+    $result = db_query('SELECT n.nid FROM {node} n WHERE n.title = :title and n.type = :type', array(':title' => $figure, ':type' => 'formation'));
+    $figure_nid = $result->fetchField();
+    // Blocks get 2 points
+    if(is_numeric($figure)) {
+      $single_point_draw[] = array(
+        'nid' => (int)$figure_nid,
+        'title' => $figure,
+      );
+      $single_point_draw[] = array(
+        'nid' => (int)$figure_nid,
+        'title' => $figure,
+      );
+    }
+    // Randoms only one
+    else {
+      $single_point_draw[] = array(
+        'nid' => (int)$figure_nid,
+        'title' => $figure,
+      );
+    }
+  }
+  // Get count of the single point draw
+  $single_point_draw_count = count($single_point_draw);
+  // If we have less points slice the array
+  if ($points < $single_point_draw_count) {
+    $multiple_point_draw = array_slice($single_point_draw, 0, $points);
+  }
+  // If its the same just copy it
+  elseif ($points == $single_point_draw_count) {
+    $multiple_point_draw = $single_point_draw;
+  }
+  // If its bigger multiply and add the sliced rest.
+  else {
+    // Generate as many figures as points
+    $multiplier = ceil($points / $single_point_draw_count);
+    $i = 0;
+    $multiple_point_draw = array();
+    while ($i < $multiplier) {
+      $multiple_point_draw = array_merge($single_point_draw, $multiple_point_draw);
+      $i++;
+    }
+    // Cut off excess points
+    $multiple_point_draw = array_slice($multiple_point_draw, 0, $points);
+  }
+
+  // Return all the points we need to generate
+  return array_values($multiple_point_draw);
+}
+
+function ss_referencer_preprocess_page(&$variables) {
+  if (isset($variables['node']) && $variables['node']->type == 'jump') {
+    drupal_add_js(drupal_get_path('module', 'ss_referencer') . '/js/jQuery.tubeplayer.min.js');
+    drupal_add_js(drupal_get_path('module', 'ss_referencer') . '/js/seek.js');
+  }
+}
+
+// /**
+// * Alter mapping targets for entities. Use this hook to add additional target
+// * options to the mapping form of Node processors.
+// *
+// * If the key in $targets[] does not correspond to the actual key on the node
+// * object ($node->key), real_target MUST be specified. See mappers/link.inc
+// *
+// * For an example implementation, see mappers/content.inc
+// *
+// * @param &$targets
+// *   Array containing the targets to be offered to the user. Add to this array
+// *   to expose additional options. Remove from this array to suppress options.
+// *   Remove with caution.
+// * @param $entity_type
+// *   The entity type of the target, for instance a 'node' entity.
+// * @param $bundle_name
+// *   The bundle name for which to alter targets.
+// */
+// function ss_referencer_feeds_processor_targets_alter(&$targets, $entity_type, $bundle_name) {
+//   if ($entity_type == 'node') {
+//     $targets['field_video'] = array(
+//       'name' => t('Video field'),
+//       'description' => t('ID for the video that needs to be embedded.'),
+//       'callback' => 'ss_referencer_set_video',
+//     );
+//   }
+// }
+
+// /**
+//  * Example callback specified in hook_feeds_processor_targets_alter().
+//  *
+//  * @param $source
+//  *   Field mapper source settings.
+//  * @param $entity
+//  *   An entity object, for instance a node object.
+//  * @param $target
+//  *   A string identifying the target on the node.
+//  * @param $value
+//  *   The value to populate the target with.
+//  *
+//  */
+// function ss_referencer_set_video($source, $entity, $target, $value) {
+//   $entity->{$target}[$entity->language][0]['video_id'] = $value;
+//   if (isset($source->importer->processor->config['input_format'])) {
+//     $entity->{$target}[$entity->language][0]['format'] =
+//     $source->importer->processor->config['input_format'];
+//   }
+// }
+
+function ss_referencer_form_views_exposed_form_alter(&$form, &$form_state, $form_id) {
+
+  if (isset($form['field_formation_target_id'])) {
+    $form['field_formation_target_id'] = array(
+      '#type' => 'select',
+      '#options' => ss_referencer_get_formations(),
+      '#default_value' => $form['field_formation_target_id']['#default_value'],
+      '#multiple' => TRUE,
+    );
+  }
+  if (isset($form['field_training_target_id'])) {
+    $year = 2012;
+    $form['field_training_target_id'] = array(
+      '#type' => 'select',
+      '#options' => ss_referencer_get_trainings($year),
+      '#default_value' => $form['field_training_target_id']['#default_value'],
+      '#multiple' => TRUE,
+    );
+  }
+}
+
+function ss_referencer_get_formations() {
+  // Get all formations
+  $result = db_query('SELECT n.nid, n.title FROM {node} n WHERE n.type = :type', array(':type' => 'formation'));
+  $formations = array('' => t('All'));
+  foreach ($result as $record) {
+    $formations[$record->nid] = $record->title;
+  }
+  return $formations;
+}
+
+function ss_referencer_get_trainings($year) {
+  // Get all trainings
+  $result = db_query('SELECT n.nid, n.title FROM {node} n WHERE n.type = :type', array(':type' => 'training'));
+  $trainings = array('' => t('All'));
+  foreach ($result as $record) {
+    $trainings[$record->nid] = $record->title;
+  }
+  return $trainings;
+}
+
+
+/*
+ * Record button
+ *
+ * Pause video on exit start point
+ * When pressed record play movie and set start time
+ * Pressing space sets keys
+ * At end of video or stop record perform node updates for the points
+ */

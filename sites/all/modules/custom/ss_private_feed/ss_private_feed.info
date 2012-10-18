@@ -1,0 +1,6 @@
+name = Supersonic Private Feed
+description = Enables authentication before retrieving a feed.
+dependencies[] = feeds
+package = Supersonic
+core = 7.x
+

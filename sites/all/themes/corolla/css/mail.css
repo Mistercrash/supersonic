@@ -1,0 +1,23 @@
+@CHARSET "ISO-8859-1";
+
+/* Training email overview */
+.view-training-email-overview table {
+  width: 600px;
+}
+.view-training-email-field table {
+  width: 600px;
+}
+.view-training-email-field table td img {
+  padding-right:20px;
+  margin:0;
+}
+.view-training-email-field table td.col-last img{
+  padding-right:0;
+}
+.view-training-email-field table h3 {
+  display:inline;
+  font-size:1.1em;
+}
+.view-training-email-field table th, .view-training-email-field table td {
+  padding:0 0 20px 0;
+}

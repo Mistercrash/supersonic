@@ -1,0 +1,5 @@
+name = Supersonic Referencer
+description = Automisation of references and relations at node creation.
+package = Supersonic
+core = 7.x
+

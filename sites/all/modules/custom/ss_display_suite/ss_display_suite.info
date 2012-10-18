@@ -1,0 +1,7 @@
+name = Supersonic Display Suite
+description = Supersonic Display Suite fields and stuff
+dependencies[] = ds
+package = Supersonic
+core = 7.x
+files[] = ss_display_suite.module
+files[] = ss_display_suite.ds_fields_info.inc

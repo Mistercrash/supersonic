@@ -1,0 +1,17 @@
+<?php
+module_load_include('inc', 'ss_display_suite', 'ss_display_suite.ds_fields_info');
+/**
+ * @file
+ * TODO: Enter file description here.
+ */
+
+/**
+ * Implements hook_help().
+ */
+function ss_display_suite_help($path, $arg) {
+  switch ($path) {
+    case 'admin/help#ss_display_suite':
+      return t("Help text");
+    // OPTIONAL: Add additional cases for other paths that should display help text.
+  }
+}
