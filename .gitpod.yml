@@ -1,0 +1,15 @@
+tasks:
+  - name: Set wakatime api key
+    command: |
+      echo -e "[settings]\napi_key = $WAKATIME_API_KEY" > ~/.wakatime.cfg
+
+vscode:
+  extensions:
+    - felixfbecker.php-debug
+    - wongjn.php-sniffer
+    - neilbrayfield.php-docblocker
+    - bmewburn.vscode-intelephense-client
+    - mblode.twig-language-2
+    - timonwong.shellcheck
+    - rogalmic.bash-debug
+    - WakaTime.vscode-wakatime
